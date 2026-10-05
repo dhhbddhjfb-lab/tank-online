@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="th"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Tank 90 Online</title>
+<style>
+:root{--bg:#f1efe8;--fg:#1c1c1c;--card:#fff;--bd:#c9c5b8;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121212;--fg:#eee;--card:#222;--bd:#444}}
+:root[data-theme="dark"]{--bg:#121212;--fg:#eee;--card:#222;--bd:#444}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,sans-serif;text-align:center;user-select:none;-webkit-user-select:none;touch-action:manipulation}
+h1{font:700 18px monospace;letter-spacing:2px;margin:10px 0 6px}
+#c{display:block;margin:0 auto;width:min(100%,416px);aspect-ratio:1;background:#000;image-rendering:pixelated;border:3px solid var(--bd);box-sizing:border-box}
+#ov{max-width:300px;margin:8px auto;padding:14px;background:var(--card);border:1px solid var(--bd);border-radius:10px}
+#ov input{width:100%;box-sizing:border-box;margin:4px 0 8px;padding:9px;font-size:16px;border:1px solid var(--bd);border-radius:6px;background:var(--bg);color:var(--fg)}
+#ov button{width:100%;padding:11px;font-size:16px;font-weight:700;border:0;border-radius:6px;background:#e0a526;color:#111}
+#ov small{display:block;margin-top:8px;opacity:.7;font-size:12px}
+#sb{font:13px monospace;margin:6px 0;min-height:18px}
+.ctl{display:none;max-width:416px;margin:6px auto;justify-content:space-between;align-items:center;padding:0 14px;box-sizing:border-box}
+.dp{display:grid;grid-template:"a u b" 56px "l . r" 56px "c d e" 56px/56px 56px 56px;gap:4px}
+.ctl b{display:flex;align-items:center;justify-content:center;background:var(--card);border:1px solid var(--bd);border-radius:10px;font-size:20px;touch-action:none}
+#fire{width:92px;height:92px;border-radius:50%!important;background:#d9453b!important;color:#fff;font:700 15px monospace}
+@media (pointer:coarse){.ctl{display:flex}}
+</style></head><body>
+<h1>TANK 90 ONLINE</h1>
+<canvas id="c" width="416" height="416"></canvas>
+<div id="sb"></div>
+<button id="re" style="display:none;width:min(100%,300px);margin:8px auto;padding:11px;font-size:16px;font-weight:700;border:0;border-radius:6px;background:#e0a526;color:#111">เล่นใหม่</button>
+<div id="ov">
+<input id="nm" maxlength="10" placeholder="ชื่อ">
+<input id="rc" maxlength="20" placeholder="รหัสห้อง" value="tank1">
+<button id="solo" style="background:#4cd964;margin-bottom:8px">เล่นกับบอท (คนเดียว เก็บแต้ม)</button>
+<button id="go">เล่นออนไลน์ ช่วยกันยิงบอท</button>
+<small>ให้เพื่อนใส่รหัสห้องเดียวกันเพื่อเล่นด้วยกัน · ลูกศร/WASD เดิน · เว้นวรรคยิง</small>
+</div>
+<div class="ctl"><div class="dp">
+<b data-k="ArrowUp" style="grid-area:u">▲</b><b data-k="ArrowLeft" style="grid-area:l">◀</b>
+<b data-k="ArrowRight" style="grid-area:r">▶</b><b data-k="ArrowDown" style="grid-area:d">▼</b></div>
+<b id="fire" data-k=" ">FIRE</b></div>
+<script>
+const T=32,N=13,SP=95,BS=270,DX=[0,1,0,-1],DY=[-1,0,1,0];
+const M=[".............",".BB.BB.BB.BB.",".BB.BB.BB.BB.",".............","SS.BBBBBBB.SS",".............",".BB.S...S.BB.",".............","SS.BBBBBBB.SS",".............",".BB.BB.BB.BB.",".BB.BB.BB.BB.","............."].map(r=>r.split(''));
+const SPAWN=[[0,0],[12,0],[0,12],[12,12],[6,3],[6,9]];
+const COLS=['#f5d33b','#4cd964','#ff6b6b','#5ac8fa','#ff9f43','#c77dff'];
+const cv=document.getElementById('c'),g=cv.getContext('2d');
+const me={x:0,y:0,d:0,hp:3,k:0,dd:0,inv:0,score:0,out:false,n:'',c:COLS[Math.random()*COLS.length|0]};
+let cand=[],bshots=[],bsN=0,lastBs,over=false,solo=false,bots=[],best=0,room=null,bul=[],seen={},hitSeen={},keys={},pref=0,shotN=0,cool=0,t0=0,tPres=0,tSb=0,running=false;
+const DK=['ArrowUp','ArrowRight','ArrowDown','ArrowLeft'];
+const W={w:'ArrowUp',a:'ArrowLeft',s:'ArrowDown',d:'ArrowRight'};
+document.getElementById('nm').value='P'+(10+Math.random()*90|0);
+
+function netRoom(code){return new Promise((res,rej)=>{
+ const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host);
+ const peers=new Map();let myId=null,snap=[],ok=false;
+ const rebuild=()=>{snap=[...peers.entries()].map(([id,p])=>({peer:id,isMe:id===myId,kind:'viewer',presence:p}))};
+ const R={peers:()=>snap,connected:()=>ok,presence:(patch)=>{
+  const mine=peers.get(myId);if(mine){for(const k in patch){if(patch[k]===null)delete mine[k];else mine[k]=patch[k]}rebuild()}
+  if(ok)ws.send(JSON.stringify({t:'p',p:patch}));return Promise.resolve()}};
+ ws.onopen=()=>ws.send(JSON.stringify({t:'join',r:code}));
+ ws.onmessage=e=>{const m=JSON.parse(e.data);
+  if(m.t==='hello'){myId=m.id;ok=true;peers.clear();peers.set(myId,{});for(const q of m.peers)peers.set(q.id,q.p);rebuild();res(R)}
+  else if(m.t==='full'){rej(new Error('full'))}
+  else if(m.t==='p'){const q=peers.get(m.id)||{};peers.set(m.id,q);for(const k in m.p){if(m.p[k]===null)delete q[k];else q[k]=m.p[k]}rebuild()}
+  else if(m.t==='left'){peers.delete(m.id);rebuild()}};
+ ws.onclose=()=>{ok=false};ws.onerror=()=>{if(!ok)rej(new Error('ws'))}})}
+function send(p){if(room)room.presence(p).catch(()=>{})}
+function solid(x,y){const tx=Math.floor(x/T),ty=Math.floor(y/T);return tx<0||ty<0||tx>=N||ty>=N||M[ty][tx]!=='.'}
+function blocked(x,y){const h=12;return solid(x-h,y-h)||solid(x+h,y-h)||solid(x-h,y+h)||solid(x+h,y+h)}
+function spawn(){const s=SPAWN[Math.random()*SPAWN.length|0];me.x=s[0]*T+T/2;me.y=s[1]*T+T/2;me.d=0;me.hp=3;me.inv=2}
+function curDir(){if(keys[DK[pref]])return pref;for(let i=0;i<4;i++)if(keys[DK[i]])return i;return -1}
+function fire(){cool=.45;shotN++;const x=me.x+DX[me.d]*16,y=me.y+DY[me.d]*16;
+ bul.push({x,y,d:me.d,o:'me'});send({s:{i:shotN,x:Math.round(x),y:Math.round(y),d:me.d}})}
+function hurt(o){if(me.inv>0||me.out)return;me.hp--;
+ if(me.hp<=0){me.dd++;if(me.dd>=3){if(solo)over=true;else{me.out=true;send({out:1,hp:0,dd:me.dd})}return}spawn();send({hb:o,hn:me.dd,hp:me.hp,dd:me.dd})}else send({hp:me.hp})}
+
+function near(k){let b=null,d=1e9;for(const c of cand){const e=Math.hypot(c.x-k.x,c.y-k.y);if(e<d){d=e;b=c}}return b}
+function botTick(k,dt,lv){
+ if(!k.alive){k.rt-=dt;if(k.rt>0)return;let s;
+  for(let i=0;i<9;i++){s=SPAWN[Math.random()*SPAWN.length|0];const q=cand[0]||me;if(Math.hypot(s[0]*T+16-q.x,s[1]*T+16-q.y)>150)break}
+  k.x=s[0]*T+16;k.y=s[1]*T+16;k.alive=1;k.d=2;k.t=0;k.c=1;return}
+ k.t-=dt;k.c-=dt;const tg=near(k)||me;
+ if(k.t<=0){k.t=.6+Math.random()*1.2;const dx=tg.x-k.x,dy=tg.y-k.y;
+  k.d=Math.random()<.5?(Math.abs(dx)>Math.abs(dy)?(dx>0?1:3):(dy>0?2:0)):Math.random()*4|0}
+ const sp=50+8*lv,nx=k.x+DX[k.d]*sp*dt,ny=k.y+DY[k.d]*sp*dt;
+ if(blocked(nx,k.y)||blocked(k.x,ny)){k.d=Math.random()*4|0;k.t=.3}else{k.x=nx;k.y=ny}
+ const al=(Math.abs(tg.x-k.x)<16&&((k.d===0&&tg.y<k.y)||(k.d===2&&tg.y>k.y)))||(Math.abs(tg.y-k.y)<16&&((k.d===1&&tg.x>k.x)||(k.d===3&&tg.x<k.x)));
+ if(k.c<=0&&(al||Math.random()<.01)){k.c=al?.9:1.6;{const x=k.x+DX[k.d]*16,y=k.y+DY[k.d]*16;bul.push({x,y,d:k.d,o:'bot'});bshots.push([bsN=Math.max(bsN+1,Date.now()),Math.round(x),Math.round(y),k.d]);if(bshots.length>4)bshots.shift()}}}
+function tank(x,y,d,c,n,hp){g.save();g.translate(x,y);g.rotate(d*Math.PI/2);
+ g.fillStyle='#333';g.fillRect(-13,-13,6,26);g.fillRect(7,-13,6,26);
+ g.fillStyle=c;g.fillRect(-8,-11,16,22);g.fillRect(-2,-19,4,12);
+ g.fillStyle='rgba(0,0,0,.35)';g.fillRect(-4,-4,8,8);g.restore();
+ g.fillStyle='#fff';g.font='10px monospace';g.textAlign='center';
+ g.fillText(n||'?',x,y-21);g.fillStyle='#ff6b6b';g.fillText('♥'.repeat(Math.max(0,hp||0)),x,y+25)}
+
+function loop(ts){
+ if(!running)return;
+ const dt=Math.min(.05,(ts-t0)/1000||0);t0=ts;cool-=dt;if(me.inv>0)me.inv-=dt;
+ const d=(me.out||over)?-1:curDir();
+ if(d>=0){me.d=d;const nx=me.x+DX[d]*SP*dt,ny=me.y+DY[d]*SP*dt;if(!blocked(nx,me.y))me.x=nx;if(!blocked(me.x,ny))me.y=ny}
+ if(keys[' ']&&cool<=0&&!me.out&&!over)fire();
+ const ps=room?room.peers():[];
+ const mine=ps.find(p=>p.isMe),myId=mine?mine.peer:'me';
+ const others=ps.filter(p=>!p.isMe&&p.kind==='viewer'&&typeof p.presence.x==='number');
+ for(const p of others){const id=p.peer,pr=p.presence,s=pr.s;
+  if(seen[id]===undefined)seen[id]=s?s.i:0;
+  else if(s&&s.i!==seen[id]){seen[id]=s.i;bul.push({x:s.x,y:s.y,d:s.d,o:id})}
+  if(hitSeen[id]===undefined)hitSeen[id]=pr.hn||0;
+  else if((pr.hn||0)>hitSeen[id]){hitSeen[id]=pr.hn;if(pr.hb===myId){me.k++;send({k:me.k})}}}
+ const alive=others.filter(p=>!p.presence.out),ids=[myId,...others.map(p=>p.peer)].sort(),host=!room||ids[0]===myId;
+ cand=[];if(!me.out)cand.push(me);for(const p of alive)cand.push(p.presence);
+ if(room&&me.out&&!alive.length)over=true;
+ if(host){const lv=1+Math.floor(me.score/500);
+  if(cand.length){while(bots.length<Math.min(1+lv+cand.length,5+cand.length))bots.push({alive:0,rt:.5+bots.length*.7,x:0,y:0,d:2,t:0,c:1});
+   for(const k of bots){if(k.t===undefined){k.t=0;k.c=1;k.rt=1}botTick(k,dt,lv)}}}
+ else{const hp=others.find(p=>p.peer===ids[0]);
+  if(hp){const pr=hp.presence;me.score=pr.ts|0;bots=(pr.b||[]).map(a=>({x:a[0],y:a[1],d:a[2],alive:a[3]}));
+   const sh=pr.bs||[];if(lastBs===undefined)lastBs=Math.max(0,...sh.map(a=>a[0]));
+   for(const a of sh)if(a[0]>lastBs){lastBs=a[0];bul.push({x:a[1],y:a[2],d:a[3],o:'bot'})}}}
+ const tanks=[{id:myId,x:me.x,y:me.y,me:1},...others.map(p=>({id:p.peer,x:p.presence.x,y:p.presence.y}))];
+ bul=bul.filter(b=>{
+  b.x+=DX[b.d]*BS*dt;b.y+=DY[b.d]*BS*dt;
+  const tx=Math.floor(b.x/T),ty=Math.floor(b.y/T);
+  if(tx<0||ty<0||tx>=N||ty>=N)return false;
+  const c=M[ty][tx];
+  if(c==='B'){M[ty][tx]='.';return false}
+  if(c==='S')return false;
+  if(b.o!=='bot')for(const k of bots)if(k.alive&&Math.abs(b.x-k.x)<14&&Math.abs(b.y-k.y)<14){if(host){k.alive=0;k.rt=1.5;me.score+=100}return false}
+  if(b.o==='bot'&&!me.out&&Math.abs(b.x-me.x)<14&&Math.abs(b.y-me.y)<14){hurt('bot');return false}
+  return true});
+ if(room&&ts-tPres>50){tPres=ts;send(Object.assign({x:Math.round(me.x),y:Math.round(me.y),d:me.d,hp:me.hp},host?{b:bots.map(k=>[Math.round(k.x),Math.round(k.y),k.d,k.alive?1:0]),bs:bshots,ts:me.score}:{}))}
+ // draw
+ g.fillStyle='#000';g.fillRect(0,0,416,416);
+ for(let y=0;y<N;y++)for(let x=0;x<N;x++){const c=M[y][x],px=x*T,py=y*T;
+  if(c==='B'){g.fillStyle='#b5472b';g.fillRect(px,py,T,T);g.fillStyle='#e0875f';
+   for(let i=0;i<4;i++){g.fillRect(px,py+i*8+7,T,1);g.fillRect(px+(i%2?8:20),py+i*8,1,8)}}
+  else if(c==='S'){g.fillStyle='#8d9399';g.fillRect(px,py,T,T);g.fillStyle='#d3d8dc';g.fillRect(px+5,py+5,T-10,T-10);g.fillStyle='#8d9399';g.fillRect(px+10,py+10,T-20,T-20)}}
+ g.fillStyle='#fff';for(const b of bul)g.fillRect(b.x-2,b.y-2,4,4);
+ for(const k of bots)if(k.alive)tank(k.x,k.y,k.d,'#9aa7b0','BOT',1);
+ for(const p of alive)tank(p.presence.x,p.presence.y,p.presence.d|0,String(p.presence.c||'#aaa'),String(p.presence.n||'').slice(0,10),p.presence.hp);
+ if(!me.out&&(me.inv<=0||Math.floor(ts/100)%2))tank(me.x,me.y,me.d,me.c,me.n+' (คุณ)',me.hp);
+ if(me.out&&!over){g.fillStyle='#fff';g.font='14px monospace';g.textAlign='center';g.fillText('ชีวิตหมดแล้ว รอเพื่อนๆ...',208,20)}
+ if(over){if(me.score>best){best=me.score;try{localStorage.setItem('t90b',best)}catch(e){}}
+  g.fillStyle='rgba(0,0,0,.75)';g.fillRect(0,0,416,416);g.fillStyle='#ff6b6b';g.textAlign='center';
+  g.font='bold 34px monospace';g.fillText('GAME OVER',208,170);g.fillStyle='#fff';g.font='18px monospace';
+  g.fillText((room?'คะแนนทีม ':'คะแนน ')+me.score,208,210);if(!room)g.fillText('สูงสุด '+best,208,238);
+  document.getElementById('re').style.display='block';if(!room){running=false;return}}
+ if(ts-tSb>400){tSb=ts;const sb=document.getElementById('sb');
+  const rows=[[me.n,me.k],...others.map(p=>[String(p.presence.n||'?').slice(0,10),p.presence.k|0])].sort((a,b)=>b[1]-a[1]);
+  if(solo){if(me.score>best){best=me.score;try{localStorage.setItem('t90b',best)}catch(e){}}sb.textContent='คะแนน '+me.score+' | สูงสุด '+best+' | ชีวิตเหลือ '+(3-me.dd)+' | เลเวล '+(1+Math.floor(me.score/500));return requestAnimationFrame(loop)}
+  sb.textContent=(room?(room.connected()?'🟢 ในห้อง '+(others.length+1)+' คน':'🟡 กำลังเชื่อมต่อ...'):'🔴 ออฟไลน์ เพื่อนเข้าไม่ได้')+' | คะแนนทีม '+me.score+' | '+[[me.n,me.out?0:3-me.dd],...others.map(p=>[String(p.presence.n||'?').slice(0,10),p.presence.out?0:3-(p.presence.dd|0)])].map(r=>r[0]+' ♥'+r[1]).join(' ')}
+ requestAnimationFrame(loop)}
+
+addEventListener('keydown',e=>{const k=W[e.key.toLowerCase()]||e.key;
+ if(DK.includes(k)||k===' ')e.preventDefault();
+ if(DK.includes(k))pref=DK.indexOf(k);keys[k]=1});
+addEventListener('keyup',e=>{keys[W[e.key.toLowerCase()]||e.key]=0});
+document.querySelectorAll('[data-k]').forEach(el=>{const k=el.dataset.k;
+ el.addEventListener('pointerdown',e=>{e.preventDefault();el.setPointerCapture(e.pointerId);if(DK.includes(k))pref=DK.indexOf(k);keys[k]=1});
+ ['pointerup','pointercancel'].forEach(t=>el.addEventListener(t,()=>{keys[k]=0}))});
+
+document.getElementById('solo').onclick=()=>{me.n=(document.getElementById('nm').value||'P1').trim().slice(0,10);solo=true;try{best=+localStorage.getItem('t90b')||0}catch(e){}document.getElementById('ov').style.display='none';spawn();running=true;requestAnimationFrame(loop)};
+document.getElementById('re').onclick=()=>{me.dd=0;me.out=false;bul=[];over=false;if(!room){me.score=0;bots=[]}spawn();send({out:0,hp:3,dd:0});document.getElementById('re').style.display='none';if(!running){running=true;requestAnimationFrame(loop)}};
+document.getElementById('go').onclick=async()=>{
+ me.n=(document.getElementById('nm').value||'P1').trim().slice(0,10);
+ const code=(document.getElementById('rc').value||'tank1').toLowerCase().replace(/[^a-z0-9_.-]/g,'').slice(0,40)||'tank1';
+ document.getElementById('ov').style.display='none';
+ try{room=await netRoom(code)}catch(e){room=null}
+ spawn();send({n:me.n,c:me.c,k:0,out:0,dd:0,hp:3,x:Math.round(me.x),y:Math.round(me.y),d:0});
+ running=true;requestAnimationFrame(loop)};
+</script></body></html>
